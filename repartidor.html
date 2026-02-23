@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#1B4332">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>RutaVerde — Repartidor</title>
+<link rel="manifest" href="manifest.json">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin: 0; font-family: 'DM Sans', system-ui, sans-serif; background: #F7F5F0; }
+  *::-webkit-scrollbar { width: 4px; }
+  *::-webkit-scrollbar-thumb { background: #ccc; border-radius: 2px; }
+  @keyframes rv-spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js"></script>
+<script src="storage.js"></script>
+<script type="text/babel" data-type="module">
+const { useState, useEffect, useMemo, useCallback } = React;
+const { sLoad, preloadCache } = window.RVStorage;
+
+const KEYS = {
+  drivers: "rutaverde-drivers-v1",
+  optimized: "rutaverde-optimized-v1"
+};
+
+const COLORS = {
+  bg: "#F7F5F0", card: "#FFFFFF", primary: "#2D6A4F", primaryLight: "#40916C",
+  primaryDark: "#1B4332", text: "#1a1a1a", textMuted: "#6b7280", border: "#e5e2dc",
+  danger: "#dc2626", dangerBg: "#fef2f2", success: "#16a34a", successBg: "#f0fdf4",
+  infoBg: "#eff6ff", info: "#2563eb", warnBg: "#fffbeb", warn: "#d97706",
+  driverBg: "#1B4332", driverHeader: "#143527"
+};
+const font = "'DM Sans',system-ui,sans-serif";
+const mono = "'Space Mono',monospace";
+
+const DIAS_SEMANA = ["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
+function getDiaHoy() { return DIAS_SEMANA[new Date().getDay()]; }
+
+function LoadingScreen() {
+  return (
+    <div style={{ minHeight: "100vh", background: COLORS.driverBg, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 12 }}>
+      <div style={{ fontSize: 28, fontWeight: 800, color: "#fff", fontFamily: font }}>RutaVerde</div>
+      <div style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", fontFamily: font }}>Cargando datos...</div>
+      <div style={{ width: 32, height: 32, border: "3px solid rgba(255,255,255,0.2)", borderTopColor: "#fff", borderRadius: "50%", animation: "rv-spin 0.8s linear infinite" }} />
+    </div>
+  );
+}
+
+function StopCard({ stop, driverName }) {
+  const totalG = stop.orders.reduce((a, o) => a + (o.canGRD || 0), 0);
+  const totalP = stop.orders.reduce((a, o) => a + (o.canPEQ || 0), 0);
+  const pagos = [...new Set(stop.orders.map(o => o.pago).filter(Boolean))];
+  const notas = stop.orders.map(o => o.notas).filter(Boolean);
+  const senas = stop.orders.map(o => o._senas).filter(Boolean);
+  const telefono = stop.orders.find(o => o._telefono)?._telefono || "";
+  const isPickup = stop.isPickup;
+
+  const mapsLink = (stop.lat && stop.lng) ? "https://www.google.com/maps/dir/?api=1&destination=" + stop.lat + "," + stop.lng + "&travelmode=driving" : null;
+  const wazeLink = (stop.lat && stop.lng) ? "https://waze.com/ul?ll=" + stop.lat + "," + stop.lng + "&navigate=yes" : null;
+
+  let waLink = null;
+  if (!isPickup && telefono) {
+    let phone = telefono.replace(/[^0-9]/g, "");
+    if (phone.length === 8) phone = "506" + phone;
+    const cName = stop.orders[0]?._clienteNombre || stop.orders[0]?.idCliente || "";
+    const msg = "Hola " + cName + ", le saluda " + driverName + ". Estaré llegando con su pedido en unos 10 a 15 minutos. Saludos.";
+    waLink = "https://wa.me/" + phone + "?text=" + encodeURIComponent(msg);
+  }
+
+  return (
+    <div style={{ background: COLORS.card, borderRadius: 16, margin: "0 16px 12px", border: "1px solid " + COLORS.border, overflow: "hidden", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px 10px", borderBottom: "1px solid " + COLORS.border }}>
+        <div style={{ width: 38, height: 38, borderRadius: "50%", flexShrink: 0, background: isPickup ? COLORS.info : COLORS.primary, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 800, fontFamily: mono }}>{stop.position}</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: COLORS.text }}>
+            {stop.label}
+            {isPickup && <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 10, background: COLORS.infoBg, color: COLORS.info, marginLeft: 8 }}>RECOLECCIÓN</span>}
+          </div>
+          <div style={{ fontSize: 12, color: COLORS.textMuted, marginTop: 2 }}>{stop.orders[0]?._canton || ""}{stop.orders[0]?._distrito ? ", " + stop.orders[0]._distrito : ""}</div>
+        </div>
+        <div style={{ textAlign: "right", flexShrink: 0 }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: COLORS.primary, fontFamily: mono }}>{stop.etaStr}</div>
+          <div style={{ fontSize: 10, color: COLORS.textMuted }}>{stop.etaRange}</div>
+        </div>
+      </div>
+
+      <div style={{ padding: "10px 16px 6px" }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+          <span style={{ fontSize: 12, fontWeight: 700, padding: "3px 10px", borderRadius: 8, background: COLORS.successBg, color: COLORS.success, fontFamily: mono }}>{totalG > 0 ? totalG + "G " : ""}{totalP > 0 ? totalP + "P" : ""}{!totalG && !totalP ? "0" : ""}</span>
+          {pagos.map(p => <span key={p} style={{ fontSize: 12, fontWeight: 600, padding: "3px 10px", borderRadius: 8, background: COLORS.warnBg, color: COLORS.warn }}>{p}</span>)}
+          {stop.orders.length > 1 && <span style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 8, background: COLORS.bg, color: COLORS.textMuted }}>{stop.orders.length} pedidos</span>}
+        </div>
+        {isPickup && stop.orders.length > 0 && <div style={{ background: COLORS.infoBg, borderRadius: 10, padding: "8px 12px", marginBottom: 8, fontSize: 12, color: COLORS.info }}>
+          <div style={{ fontWeight: 700, marginBottom: 4 }}>Pedidos en esta recolección:</div>
+          {stop.orders.map(o => <div key={o.numPedido}>#{o.numPedido} - {o._clienteNombre || o.idCliente} ({o.canGRD > 0 ? o.canGRD + "G " : ""}{o.canPEQ > 0 ? o.canPEQ + "P" : ""})</div>)}
+        </div>}
+        {notas.length > 0 && <div style={{ background: COLORS.warnBg, borderRadius: 10, padding: "8px 12px", marginBottom: 8, fontSize: 12, color: COLORS.warn }}><span style={{ fontWeight: 700 }}>Notas: </span>{notas.join(" | ")}</div>}
+        {senas.length > 0 && <div style={{ background: "#f0f9ff", borderRadius: 10, padding: "8px 12px", marginBottom: 8, fontSize: 12, color: "#0369a1" }}><span style={{ fontWeight: 700 }}>Señas: </span>{senas.join(" | ")}</div>}
+        {telefono && !isPickup && <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 8 }}>Tel: <a href={"tel:" + telefono} style={{ color: COLORS.primary, fontWeight: 600, textDecoration: "none" }}>{telefono}</a></div>}
+      </div>
+
+      <div style={{ display: "flex", gap: 0, borderTop: "1px solid " + COLORS.border }}>
+        {mapsLink && <a href={mapsLink} target="_blank" rel="noopener noreferrer" style={{ flex: 1, padding: "14px 8px", textAlign: "center", textDecoration: "none", fontSize: 12, fontWeight: 700, color: COLORS.primary, fontFamily: font, borderRight: "1px solid " + COLORS.border }}>Maps</a>}
+        {wazeLink && <a href={wazeLink} target="_blank" rel="noopener noreferrer" style={{ flex: 1, padding: "14px 8px", textAlign: "center", textDecoration: "none", fontSize: 12, fontWeight: 700, color: "#33ccff", fontFamily: font, borderRight: waLink ? "1px solid " + COLORS.border : "none" }}>Waze</a>}
+        {waLink && <a href={waLink} target="_blank" rel="noopener noreferrer" style={{ flex: 1, padding: "14px 8px", textAlign: "center", textDecoration: "none", fontSize: 12, fontWeight: 700, color: "#25d366", fontFamily: font }}>WhatsApp</a>}
+        {!mapsLink && !wazeLink && !waLink && <div style={{ flex: 1, padding: "14px 8px", textAlign: "center", fontSize: 12, color: COLORS.textMuted }}>Sin GPS</div>}
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  const [loading, setLoading] = useState(true);
+  const [drivers, setDrivers] = useState([]);
+  const [optimizedData, setOptimizedData] = useState(null);
+  const [selectedDriver, setSelectedDriver] = useState(null);
+  const [selectedDia, setSelectedDia] = useState(null);
+
+  useEffect(() => {
+    (async () => {
+      await preloadCache([KEYS.drivers, KEYS.optimized]);
+      const [drv, opt] = await Promise.all([sLoad(KEYS.drivers), sLoad(KEYS.optimized)]);
+      setDrivers((drv || []).filter(d => d.activo));
+      setOptimizedData(opt);
+      setLoading(false);
+    })();
+  }, []);
+
+  const availableDias = useMemo(() => {
+    if (!optimizedData?.routes) return [];
+    const dias = [];
+    if (optimizedData.dia1) dias.push(optimizedData.dia1);
+    if (optimizedData.dia2) dias.push(optimizedData.dia2);
+    return dias;
+  }, [optimizedData]);
+
+  useEffect(() => {
+    if (selectedDriver && availableDias.length > 0 && !selectedDia) {
+      const hoy = getDiaHoy();
+      setSelectedDia(availableDias.includes(hoy) ? hoy : availableDias[0]);
+    }
+  }, [availableDias, selectedDia, selectedDriver]);
+
+  const currentRoute = useMemo(() => {
+    if (!selectedDriver || !optimizedData?.routes) return null;
+    return optimizedData.routes[selectedDriver.nombre] || null;
+  }, [selectedDriver, optimizedData]);
+
+  if (loading) return <LoadingScreen />;
+
+  if (!selectedDriver) {
+    return (
+      <div style={{ minHeight: "100vh", background: COLORS.driverBg, display: "flex", flexDirection: "column" }}>
+        <div style={{ padding: "48px 24px 24px", textAlign: "center" }}>
+          <div style={{ fontSize: 32, fontWeight: 800, color: "#fff", fontFamily: font }}>RutaVerde</div>
+          <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)", fontFamily: font, marginTop: 4 }}>Vista Repartidor</div>
+        </div>
+        <div style={{ flex: 1, padding: "0 20px 40px" }}>
+          <div style={{ fontSize: 15, fontWeight: 600, color: "rgba(255,255,255,0.8)", marginBottom: 16, fontFamily: font }}>Selecciona tu nombre:</div>
+          {drivers.length === 0 && <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 14, textAlign: "center", padding: 40 }}>No hay repartidores configurados.</div>}
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {drivers.map(d => (
+              <button key={d.id} onClick={() => { setSelectedDriver(d); setSelectedDia(null); }} style={{
+                padding: "18px 20px", borderRadius: 14, border: "1px solid rgba(255,255,255,0.15)",
+                background: "rgba(255,255,255,0.08)", color: "#fff", cursor: "pointer",
+                fontSize: 18, fontWeight: 700, fontFamily: font, textAlign: "left",
+                display: "flex", alignItems: "center", gap: 14
+              }}>
+                <div style={{ width: 44, height: 44, borderRadius: "50%", background: COLORS.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 800, flexShrink: 0 }}>{d.nombre.charAt(0)}</div>
+                <span>{d.nombre}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ minHeight: "100vh", background: COLORS.bg, fontFamily: font, paddingBottom: 40 }}>
+      {/* Header */}
+      <div style={{ background: "linear-gradient(135deg, " + COLORS.driverHeader + ", " + COLORS.driverBg + ")", color: "#fff", padding: "16px 16px 0", position: "sticky", top: 0, zIndex: 100 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+          <button onClick={() => { setSelectedDriver(null); setSelectedDia(null); }} style={{ background: "rgba(255,255,255,0.12)", border: "none", color: "#fff", cursor: "pointer", padding: "8px 14px", borderRadius: 10, fontSize: 13, fontWeight: 600, fontFamily: font }}>← Cambiar</button>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 20, fontWeight: 800 }}>{selectedDriver.nombre}</div>
+            <div style={{ fontSize: 11, opacity: 0.6 }}>RutaVerde</div>
+          </div>
+        </div>
+
+        {availableDias.length > 1 && <div style={{ display: "flex", gap: 6, paddingBottom: 12 }}>
+          {availableDias.map(d => <button key={d} onClick={() => setSelectedDia(d)} style={{ padding: "8px 16px", borderRadius: 20, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: font, background: d === selectedDia ? "#fff" : "rgba(255,255,255,0.12)", color: d === selectedDia ? COLORS.primaryDark : "rgba(255,255,255,0.7)" }}>{d}</button>)}
+        </div>}
+
+        {currentRoute && <div style={{ padding: "0 0 16px" }}>
+          <div style={{ background: "rgba(255,255,255,0.1)", borderRadius: 14, padding: "14px 16px", display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, textAlign: "center" }}>
+            <div><div style={{ fontSize: 22, fontWeight: 800, color: "#fff", fontFamily: mono }}>{currentRoute.stops.length}</div><div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", fontWeight: 600 }}>Paradas</div></div>
+            <div><div style={{ fontSize: 22, fontWeight: 800, color: "#fff", fontFamily: mono }}>{currentRoute.totalDistKm}</div><div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", fontWeight: 600 }}>km</div></div>
+            <div><div style={{ fontSize: 18, fontWeight: 800, color: "#fff", fontFamily: mono }}>{currentRoute.startTime}-{currentRoute.endTime}</div><div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", fontWeight: 600 }}>Horario</div></div>
+          </div>
+        </div>}
+      </div>
+
+      {/* Content */}
+      {!currentRoute ? (
+        <div style={{ padding: "40px 24px", textAlign: "center" }}>
+          <div style={{ fontSize: 48, marginBottom: 16 }}>🗺️</div>
+          <div style={{ fontSize: 16, fontWeight: 700, color: COLORS.text, marginBottom: 8 }}>No hay ruta optimizada</div>
+          <div style={{ fontSize: 13, color: COLORS.textMuted, lineHeight: 1.5 }}>No se encontró ruta para <strong>{selectedDriver.nombre}</strong>. Verificá que se haya optimizado desde el panel admin.</div>
+        </div>
+      ) : (
+        <div style={{ paddingTop: 12 }}>
+          {currentRoute.config?.puntoSalida && <div style={{ margin: "0 16px 8px", padding: "12px 16px", borderRadius: 12, background: COLORS.successBg, border: "1px solid #bbf7d0", display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ width: 32, height: 32, borderRadius: "50%", background: COLORS.success, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 800 }}>S</div>
+            <div><div style={{ fontSize: 11, fontWeight: 600, color: COLORS.success, textTransform: "uppercase" }}>Punto de salida</div><div style={{ fontSize: 14, fontWeight: 700 }}>{currentRoute.config.puntoSalida.nombre || "Origen"}</div></div>
+          </div>}
+
+          {currentRoute.stops.map((stop, idx) => <StopCard key={stop.key || idx} stop={stop} driverName={selectedDriver.nombre} />)}
+
+          {currentRoute.config?.puntoLlegada && <div style={{ margin: "0 16px 8px", padding: "12px 16px", borderRadius: 12, background: COLORS.dangerBg, border: "1px solid #fecaca", display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ width: 32, height: 32, borderRadius: "50%", background: COLORS.danger, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 800 }}>F</div>
+            <div><div style={{ fontSize: 11, fontWeight: 600, color: COLORS.danger, textTransform: "uppercase" }}>Punto de llegada</div><div style={{ fontSize: 14, fontWeight: 700 }}>{currentRoute.config.puntoLlegada.nombre || "Destino"}</div></div>
+          </div>}
+
+          <div style={{ padding: "8px 16px 20px" }}>
+            <a href={(() => {
+              const pts = [currentRoute.config.puntoSalida.lat + "," + currentRoute.config.puntoSalida.lng];
+              currentRoute.stops.forEach(s => { if (s.lat && s.lng) pts.push(s.lat + "," + s.lng); });
+              pts.push(currentRoute.config.puntoLlegada.lat + "," + currentRoute.config.puntoLlegada.lng);
+              return "https://www.google.com/maps/dir/" + pts.join("/");
+            })()} target="_blank" rel="noopener noreferrer" style={{ display: "block", padding: 16, borderRadius: 14, textAlign: "center", background: COLORS.primary, color: "#fff", textDecoration: "none", fontSize: 14, fontWeight: 700, fontFamily: font, boxShadow: "0 2px 8px rgba(45,106,79,0.3)" }}>
+              Abrir ruta completa en Google Maps
+            </a>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Register Service Worker
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/sw.js").catch(e => console.log("SW registration failed:", e));
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
