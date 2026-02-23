@@ -588,11 +588,20 @@ function OrdersTab({drivers,pickups,routes,clients}){
   // Assign driver based on routes > zones
   const assignDriver=(prov,canton,dist,dia)=>{
     if(!dia||!prov||!canton)return null;
+    // First pass: exact distrito match has priority
     for(const r of routes){
       if(r.dia!==dia)continue;
       for(const z of(r.zonas||[])){
         if(norm(z.provincia)===norm(prov)&&norm(z.canton)===norm(canton)){
           if(z.distrito!=="Todos"&&norm(z.distrito)===norm(dist))return r.repartidor;
+        }
+      }
+    }
+    // Second pass: "Todos" distritos as fallback
+    for(const r of routes){
+      if(r.dia!==dia)continue;
+      for(const z of(r.zonas||[])){
+        if(norm(z.provincia)===norm(prov)&&norm(z.canton)===norm(canton)){
           if(z.distrito==="Todos")return r.repartidor;
         }
       }
