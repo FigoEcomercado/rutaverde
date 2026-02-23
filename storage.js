@@ -1,99 +1,91 @@
 // ============================================================
-// RUTAVERDE — Supabase Storage Layer
-// Drop-in replacement for window.storage (Claude.ai)
+// RUTAVERDE — Supabase Storage Layer (v2)
 // ============================================================
 
 const SUPABASE_URL = "https://mlbbsdtjhcepqjeaqrej.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1sYmJzZHRqaGNlcHFqZWFxcmVqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE4NjI4MjQsImV4cCI6MjA4NzQzODgyNH0.yXOwyyjHSsZ186AVob1UchSqnUS7RrrZP2Uk5K2xA2l0";
 
-const HEADERS = {
+var _H = {
   "apikey": SUPABASE_ANON_KEY,
   "Authorization": "Bearer " + SUPABASE_ANON_KEY,
-  "Content-Type": "application/json",
-  "Prefer": "return=minimal"
+  "Content-Type": "application/json"
 };
 
-// In-memory cache for fast reads + offline support
-const _cache = {};
+var _cache = {};
 
-async function dbGet(key) {
-  // Try cache first
-  if (_cache[key] !== undefined) {
-    return _cache[key];
-  }
+async function sLoad(key) {
+  if (_cache[key] !== undefined) return _cache[key];
   try {
-    const resp = await fetch(
+    var resp = await fetch(
       SUPABASE_URL + "/rest/v1/kv_store?key=eq." + encodeURIComponent(key) + "&select=value",
-      { headers: { "apikey": SUPABASE_ANON_KEY, "Authorization": "Bearer " + SUPABASE_ANON_KEY } }
+      { headers: _H }
     );
-    if (!resp.ok) return null;
-    const rows = await resp.json();
-    if (rows.length > 0) {
+    if (!resp.ok) {
+      console.error("sLoad error:", resp.status, key);
+      return null;
+    }
+    var rows = await resp.json();
+    if (rows.length > 0 && rows[0].value != null) {
       _cache[key] = rows[0].value;
       return rows[0].value;
     }
     return null;
   } catch (e) {
-    console.warn("dbGet offline, using cache for:", key);
+    console.warn("sLoad offline:", key, e);
     return _cache[key] || null;
   }
 }
 
-async function dbSet(key, value) {
-  // Update cache immediately
-  _cache[key] = value;
+async function sSave(key, data) {
+  _cache[key] = data;
   try {
-    const resp = await fetch(
-      SUPABASE_URL + "/rest/v1/rpc/upsert_kv",
+    // Upsert via PostgREST: POST with on_conflict resolution
+    var resp = await fetch(
+      SUPABASE_URL + "/rest/v1/kv_store",
       {
         method: "POST",
-        headers: HEADERS,
-        body: JSON.stringify({ p_key: key, p_value: value })
+        headers: {
+          "apikey": SUPABASE_ANON_KEY,
+          "Authorization": "Bearer " + SUPABASE_ANON_KEY,
+          "Content-Type": "application/json",
+          "Prefer": "resolution=merge-duplicates,return=minimal"
+        },
+        body: JSON.stringify({
+          key: key,
+          value: data,
+          updated_at: new Date().toISOString()
+        })
       }
     );
-    return resp.ok;
+    if (!resp.ok) {
+      var errText = await resp.text();
+      console.error("sSave error:", resp.status, key, errText);
+      return false;
+    }
+    return true;
   } catch (e) {
-    console.warn("dbSet offline, cached locally:", key);
+    console.warn("sSave offline:", key, e);
     return false;
   }
 }
 
-// Storage interface matching the app's sLoad/sSave pattern
-async function sLoad(key) {
-  try {
-    const val = await dbGet(key);
-    return val || null;
-  } catch (e) {
-    console.error("sLoad error:", key, e);
-    return null;
-  }
-}
-
-async function sSave(key, data) {
-  try {
-    return await dbSet(key, data);
-  } catch (e) {
-    console.error("sSave error:", key, e);
-    return false;
-  }
-}
-
-// Preload all keys into cache (call on app init for offline support)
 async function preloadCache(keys) {
   try {
-    const keyList = keys.map(k => '"' + k + '"').join(",");
-    const resp = await fetch(
-      SUPABASE_URL + "/rest/v1/kv_store?key=in.(" + encodeURIComponent(keyList.replace(/"/g, '"')) + ")&select=key,value",
-      { headers: { "apikey": SUPABASE_ANON_KEY, "Authorization": "Bearer " + SUPABASE_ANON_KEY } }
+    var filter = "(" + keys.map(function(k){ return '"' + k + '"'; }).join(",") + ")";
+    var resp = await fetch(
+      SUPABASE_URL + "/rest/v1/kv_store?key=in." + filter + "&select=key,value",
+      { headers: _H }
     );
     if (resp.ok) {
-      const rows = await resp.json();
-      rows.forEach(r => { _cache[r.key] = r.value; });
+      var rows = await resp.json();
+      rows.forEach(function(r) { if (r.value != null) _cache[r.key] = r.value; });
+      console.log("RVStorage: loaded", rows.length, "keys");
+    } else {
+      console.error("preloadCache error:", resp.status);
     }
   } catch (e) {
-    console.warn("preloadCache failed (offline?):", e);
+    console.warn("preloadCache offline:", e);
   }
 }
 
-// Export for use in HTML script tags
-window.RVStorage = { sLoad, sSave, preloadCache, dbGet, dbSet };
+window.RVStorage = { sLoad: sLoad, sSave: sSave, preloadCache: preloadCache };
